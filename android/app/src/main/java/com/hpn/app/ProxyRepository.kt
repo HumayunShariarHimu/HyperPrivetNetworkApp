@@ -7,6 +7,7 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URL
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Callable
 import java.util.concurrent.ExecutorCompletionService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -93,7 +94,7 @@ object ProxyRepository {
                 }.distinctBy { it.key() }.take(320)
                 val completion = ExecutorCompletionService<Endpoint?>(probeExecutor)
                 val futures = candidates.map { candidate ->
-                    completion.submit<Endpoint?> { if (probeSocks5(candidate)) candidate else null }
+                    completion.submit(Callable { if (probeSocks5(candidate)) candidate else null })
                 }
                 val verifiedMap = LinkedHashMap<String, Endpoint>()
                 var completed = 0

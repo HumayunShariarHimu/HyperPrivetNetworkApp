@@ -10,4 +10,8 @@
 #ifndef __HEV_JNI_H__
 #define __HEV_JNI_H__
 
+#ifdef ANDROID
+int hev_android_protect_socket (int fd);
+#endif
+
 #endif /* __HEV_JNI_H__ */

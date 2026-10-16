@@ -31,6 +31,9 @@ class HpnVpnService : VpnService() {
     private external fun TProxyStopService(): Boolean
     private external fun TProxyIsRunning(): Boolean
 
+    /** Keeps upstream SOCKS sockets outside the TUN route and prevents a VPN loop. */
+    fun protectSocket(fd: Int): Boolean = protect(fd)
+
     private var tunFd: ParcelFileDescriptor? = null
     private var activeEndpoint: SocksEndpoint? = null
     private val rotationHandler = Handler(Looper.getMainLooper())

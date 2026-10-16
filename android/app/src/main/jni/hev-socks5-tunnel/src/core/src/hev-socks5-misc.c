@@ -20,7 +20,7 @@
 
 #include "hev-socks5.h"
 #include "hev-socks5-logger-priv.h"
-
+#include "hev-jni.h"
 #include "hev-socks5-misc.h"
 #include "hev-socks5-misc-priv.h"
 
@@ -65,6 +65,13 @@ hev_socks5_socket (int type)
     fd = hev_task_io_socket_socket (AF_INET6, type, 0);
     if (fd < 0)
         return -1;
+
+#ifdef ANDROID
+    if (!hev_android_protect_socket (fd)) {
+        close (fd);
+        return -1;
+    }
+#endif
 
     res = setsockopt (fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof (zero));
     if (res < 0) {

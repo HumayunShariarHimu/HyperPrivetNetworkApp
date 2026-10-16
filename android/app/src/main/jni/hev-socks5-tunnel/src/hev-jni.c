@@ -46,6 +46,8 @@ struct _ThreadData
 static atomic_int is_running;
 static int thread_joinable;
 static JavaVM *java_vm;
+static jobject vpn_service;
+static jmethodID protect_method;
 static pthread_t work_thread;
 static pthread_mutex_t mutex;
 static pthread_key_t current_jni_env;
@@ -97,6 +99,30 @@ JNI_OnLoad (JavaVM *vm, void *reserved)
     return JNI_VERSION_1_4;
 }
 
+int
+hev_android_protect_socket (int fd)
+{
+    JNIEnv *env = NULL;
+    int attached = 0;
+    jboolean protected;
+
+    if (!java_vm || !vpn_service || !protect_method)
+        return 1;
+    if ((*java_vm)->GetEnv (java_vm, (void **)&env, JNI_VERSION_1_4) != JNI_OK) {
+        if ((*java_vm)->AttachCurrentThread (java_vm, &env, NULL) != JNI_OK)
+            return 0;
+        attached = 1;
+    }
+    protected = (*env)->CallBooleanMethod (env, vpn_service, protect_method, fd);
+    if ((*env)->ExceptionCheck (env)) {
+        (*env)->ExceptionClear (env);
+        protected = JNI_FALSE;
+    }
+    if (attached)
+        (*java_vm)->DetachCurrentThread (java_vm);
+    return protected == JNI_TRUE ? 1 : 0;
+}
+
 static void *
 thread_handler (void *data)
 {
@@ -129,6 +155,14 @@ native_start_service (JNIEnv *env, jobject thiz, jstring config_path, jint fd)
         pthread_join (work_thread, NULL);
         thread_joinable = 0;
     }
+
+    if (vpn_service)
+        (*env)->DeleteGlobalRef (env, vpn_service);
+    vpn_service = (*env)->NewGlobalRef (env, thiz);
+    protect_method = (*env)->GetMethodID (env, (*env)->GetObjectClass (env, thiz),
+                                          "protectSocket", "(I)Z");
+    if (!vpn_service || !protect_method)
+        goto exit;
 
     tdata = malloc (sizeof (ThreadData));
     if (!tdata)
@@ -179,6 +213,11 @@ native_stop_service (JNIEnv *env, jobject thiz)
 
     thread_joinable = 0;
     atomic_store_explicit (&is_running, 0, memory_order_release);
+    if (vpn_service) {
+        (*env)->DeleteGlobalRef (env, vpn_service);
+        vpn_service = NULL;
+        protect_method = NULL;
+    }
 exit:
     pthread_mutex_unlock (&mutex);
     return res == 0 ? JNI_TRUE : JNI_FALSE;
