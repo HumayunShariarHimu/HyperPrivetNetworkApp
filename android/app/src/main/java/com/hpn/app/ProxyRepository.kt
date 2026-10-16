@@ -7,6 +7,7 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URL
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.ExecutorCompletionService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -52,7 +53,7 @@ object ProxyRepository {
 
     private val refreshExecutor = Executors.newSingleThreadExecutor()
     private val sourceExecutor = Executors.newFixedThreadPool(8)
-    private val probeExecutor = Executors.newFixedThreadPool(16)
+    private val probeExecutor = Executors.newFixedThreadPool(32)
     private val refreshing = AtomicBoolean(false)
     private val waiting = CopyOnWriteArrayList<(Snapshot) -> Unit>()
     @Volatile private var snapshot = Snapshot(emptyList(), 0, SOURCES.size, 0)
@@ -84,13 +85,25 @@ object ProxyRepository {
                 }
                 val results = jobs.map { it.get(8, TimeUnit.SECONDS) }
                 val reports = results.map { it.report }
-                val raw = results.flatMap { it.endpoints }.distinctBy { it.key() }.shuffled()
-                val candidates = raw.filter { it.protocol == "socks5" }.take(96)
-                val verified = candidates.map { candidate ->
-                    probeExecutor.submit<Endpoint?> { if (probeSocks5(candidate)) candidate else null }
-                }.mapNotNull { runCatching { it.get(4, TimeUnit.SECONDS) }.getOrNull() }
-                    .distinctBy { it.key() }
-                    .take(40)
+                val raw = results.flatMap { it.endpoints }.distinctBy { it.key() }
+                // Do not shuffle one global list: a large stale feed could crowd out the
+                // smaller feeds that contain the live endpoints. Sample each source fairly.
+                val candidates = results.flatMap { result ->
+                    result.endpoints.filter { it.protocol == "socks5" }.shuffled().take(64)
+                }.distinctBy { it.key() }.take(320)
+                val completion = ExecutorCompletionService<Endpoint?>(probeExecutor)
+                val futures = candidates.map { candidate ->
+                    completion.submit<Endpoint?> { if (probeSocks5(candidate)) candidate else null }
+                }
+                val verifiedMap = LinkedHashMap<String, Endpoint>()
+                var completed = 0
+                while (completed < candidates.size && verifiedMap.size < 8) {
+                    val result = completion.poll(3, TimeUnit.SECONDS) ?: break
+                    completed++
+                    runCatching { result.get() }.getOrNull()?.let { verifiedMap[it.key()] = it }
+                }
+                futures.forEach { if (!it.isDone) it.cancel(true) }
+                val verified = verifiedMap.values.toList().take(40)
                 val ok = reports.count { it.status == "OK" }
                 snapshot = Snapshot(
                     endpoints = verified,
