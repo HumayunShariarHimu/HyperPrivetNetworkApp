@@ -109,7 +109,7 @@ class LocalSocksBridge(private val vpn: VpnService) {
                 val count = input.read(buffer)
                 if (count < 0) break
                 if (count == 0) continue
-                if (!relay.send(ByteString.of(buffer.copyOf(count)))) break
+                if (!relay.send(ByteString.of(*buffer.copyOf(count)))) break
             }
             relay.close(1000, "client closed")
             relayClosed.await(2, TimeUnit.SECONDS)
