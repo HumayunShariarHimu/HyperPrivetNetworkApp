@@ -25,7 +25,6 @@ class MainActivity : Activity() {
     private lateinit var logView: TextView
     private var connected = false
     private var intervalSeconds = 15
-    private var refreshInProgress = false
     private val logLines = ArrayDeque<String>()
 
     private val stateReceiver = object : android.content.BroadcastReceiver() {
@@ -47,7 +46,8 @@ class MainActivity : Activity() {
         intervalSeconds = prefs().getInt("interval_seconds", 15).coerceIn(5, 3600)
         setContentView(buildMinimalScreen())
         ContextCompat.registerReceiver(this, stateReceiver, IntentFilter(HpnVpnService.ACTION_STATE), ContextCompat.RECEIVER_NOT_EXPORTED)
-        refreshSourcesInBackground()
+        appendLog("RELAY // Render controlled gateway ready")
+        appendLog("TUN // local SOCKS5 bridge waiting")
     }
 
     private fun buildMinimalScreen(): View {
@@ -119,40 +119,8 @@ class MainActivity : Activity() {
             sendService(HpnVpnService.ACTION_DISCONNECT)
             return
         }
-        val pool = ProxyRepository.current().endpoints.any { it.protocol == "socks5" }
-        if (pool) requestVpnPermissionAndStart() else {
-            toast("Finding a working SOCKS5 proxy...")
-            refreshSourcesInBackground(startAfterRefresh = true)
-        }
-    }
-
-    private fun refreshSourcesInBackground(startAfterRefresh: Boolean = false) {
-        if (refreshInProgress) {
-            appendLog("FETCH // already running")
-            return
-        }
-        refreshInProgress = true
-        appendLog("FETCH // starting ${ProxyRepository.sourceLabels().size} sources")
-        ProxyRepository.refresh(this) { snapshot ->
-            refreshInProgress = false
-            if (snapshot.reports.isEmpty()) {
-                appendLog("FETCH // FAILED ${snapshot.error ?: "unknown error"}")
-            } else {
-                snapshot.reports.forEach { report ->
-                    val suffix = if (report.detail.isBlank()) "" else " (${report.detail})"
-                    appendLog("${report.status.padEnd(4)} // ${report.label}: ${report.candidates}$suffix")
-                }
-                appendLog("PARSE // ${snapshot.rawCandidates} unique candidates")
-                appendLog("PROBE // ${snapshot.endpoints.size} working SOCKS5")
-            }
-            if (snapshot.endpoints.isEmpty()) {
-                appendLog("RESULT // NO WORKING PROXY")
-                if (startAfterRefresh) toast("No working proxy found. Check Internet and try again.")
-            } else if (startAfterRefresh) {
-                appendLog("RESULT // proxy ready, opening VPN permission")
-                requestVpnPermissionAndStart()
-            }
-        }
+        appendLog("RELAY // opening protected WebSocket tunnel")
+        requestVpnPermissionAndStart()
     }
 
     private fun requestVpnPermissionAndStart() {

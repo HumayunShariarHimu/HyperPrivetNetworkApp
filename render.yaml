@@ -22,3 +22,19 @@ services:
         sync: false
       - key: ROTATING_PROXY_URL
         sync: false
+  - type: web
+    name: hpn-relay
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./relay/Dockerfile
+    dockerContext: ./relay
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: RELAY_TOKEN
+        sync: false
+      - key: MAX_CONNECTIONS
+        value: "64"
+      - key: MAX_TUNNEL_SECONDS
+        value: "3600"

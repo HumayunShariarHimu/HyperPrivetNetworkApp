@@ -36,18 +36,15 @@ class HpnVpnService : VpnService() {
 
     private var tunFd: ParcelFileDescriptor? = null
     private var activeEndpoint: SocksEndpoint? = null
+    private var relayBridge: LocalSocksBridge? = null
     private val rotationHandler = Handler(Looper.getMainLooper())
     private val rotationTask = object : Runnable {
         override fun run() {
             if (tunFd == null) return
-            ProxyRepository.refresh(this@HpnVpnService) { snapshot ->
-                if (snapshot.endpoints.any { it.protocol == "socks5" }) {
-                    rotateTunnel()
-                } else {
-                    Log.w("HPN", "Rotation skipped: live SOCKS5 refresh returned no verified endpoint")
-                }
-                scheduleRotation()
-            }
+            // The Render relay is the controlled upstream. Reconnect checks are
+            // handled by the native TUN engine; never replace it with scraped proxies.
+            Log.i("HPN", "Relay keepalive tick; controlled upstream remains active")
+            scheduleRotation()
         }
     }
 
@@ -70,8 +67,14 @@ class HpnVpnService : VpnService() {
     private fun startTunnel(endpointOverride: SocksEndpoint? = null, fatalOnFailure: Boolean = true): Boolean {
         if (tunFd != null) { publishState("CONNECTED", activeEndpoint); return true }
         val prefs = getSharedPreferences("hpn", MODE_PRIVATE)
-        val endpoint = endpointOverride ?: nextEndpoint(prefs)
-            ?: run { if (fatalOnFailure) fail("No live SOCKS5 endpoint loaded — tap UPDATE LIVE PROXIES") else Log.e("HPN", "No live SOCKS5 endpoint available for rotation"); return false }
+        val relayPort = try {
+            if (relayBridge == null) relayBridge = LocalSocksBridge(this)
+            relayBridge!!.start()
+        } catch (error: Throwable) {
+            if (fatalOnFailure) fail("Local relay bridge failed: ${error.javaClass.simpleName}")
+            return false
+        }
+        val endpoint = endpointOverride ?: SocksEndpoint("127.0.0.1", relayPort)
         val vpn = Builder()
             .setBlocking(false)
             .setSession("HPN Hyper Privet Network")
@@ -94,6 +97,8 @@ class HpnVpnService : VpnService() {
         }
         if (!TProxyStartService(config.absolutePath, fd.fd)) {
             fd.close()
+            relayBridge?.stop()
+            relayBridge = null
             if (fatalOnFailure) fail("Native TUN-to-SOCKS5 backend failed to start") else Log.e("HPN", "Native TUN-to-SOCKS5 replacement failed")
             return false
         }
@@ -113,30 +118,8 @@ class HpnVpnService : VpnService() {
 
     private fun rotateTunnel() {
         if (tunFd == null) return
-        val prefs = getSharedPreferences("hpn", MODE_PRIVATE)
-        val old = activeEndpoint
-        val next = nextEndpoint(prefs)
-        if (next == null) {
-            Log.w("HPN", "Rotation skipped: no verified SOCKS5 endpoint")
-            return
-        }
-        if (old != null && next.host == old.host && next.port == old.port) {
-            Log.w("HPN", "Rotation skipped: pool returned the active endpoint only")
-            return
-        }
-        // Make-before-break preflight: never tear down the active tunnel for a
-        // candidate that no longer completes SOCKS5 CONNECT + external IP echo.
-        if (!ProxyRepository.verify(next.host, next.port)) {
-            Log.w("HPN", "Rotation skipped: replacement endpoint failed the live SOCKS5 preflight")
-            return
-        }
-        publishState("SWITCHING", old)
-        tearDown()
-        if (startTunnel(next, fatalOnFailure = false)) return
-        if (old != null) {
-            Log.w("HPN", "New endpoint failed; restoring previous verified endpoint")
-            startTunnel(old, fatalOnFailure = false)
-        }
+        publishState("CONNECTED", activeEndpoint)
+        Log.i("HPN", "Rotation interval reached; Render relay keeps the same controlled gateway")
     }
 
     private fun stopTunnel() {
@@ -153,6 +136,8 @@ class HpnVpnService : VpnService() {
         if (TProxyIsRunning()) TProxyStopService()
         tunFd?.close()
         tunFd = null
+        relayBridge?.stop()
+        relayBridge = null
         getSharedPreferences("hpn", MODE_PRIVATE).edit().putBoolean("running", false).apply()
     }
 

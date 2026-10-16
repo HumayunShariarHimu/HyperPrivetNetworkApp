@@ -19,20 +19,23 @@ for (const token of ['VpnService', 'TProxyStartService', 'addRoute("0.0.0.0", 0)
 if (!vpn.includes('fun protectSocket(fd: Int): Boolean = protect(fd)')) throw new Error('Upstream socket protection callback missing');
 const jni = await readFile('android/app/src/main/jni/hev-socks5-tunnel/src/hev-jni.c', 'utf8');
 if (!jni.includes('hev_android_protect_socket') || !jni.includes('protectSocket')) throw new Error('JNI VPN socket protection bridge missing');
+const bridge = await readFile('android/app/src/main/java/com/hpn/app/LocalSocksBridge.kt', 'utf8');
+for (const token of ['ServerSocket(0', 'wss://hpn-relay.onrender.com/tunnel', 'ProtectedSocketFactory', 'VpnService']) if (!bridge.includes(token)) throw new Error(`Controlled relay bridge missing: ${token}`);
+const relay = await readFile('relay/server.js', 'utf8');
+for (const token of ['/health', '/tunnel', 'RELAY_TOKEN', 'createConnection']) if (!relay.includes(token)) throw new Error(`Render relay missing: ${token}`);
 const repository = await readFile('android/app/src/main/java/com/hpn/app/ProxyRepository.kt', 'utf8');
 for (const token of ['proxifly', 'proxyscrape', 'sockslist.us', 'spys.one', 'scrappey.com', 'freeproxy.world']) if (!repository.toLowerCase().includes(token)) throw new Error(`Live source missing: ${token}`);
 if (!repository.includes('distinctBy') || !repository.includes('readTimeout') || !repository.includes('probeSocks5') || !repository.includes('SOCKS5 handshake')) throw new Error('Live source pool is not verified');
 if (!repository.includes('example.com') || !repository.includes('CONNECT')) throw new Error('SOCKS5 relay verification missing');
 if (!repository.includes('HTTP/1.1\\r\\nHost: example.com')) throw new Error('SOCKS5 HTTP request must use HTTP CRLF line endings');
-if (!repository.includes('fun verify(host: String, port: Int)')) throw new Error('VPN rotation endpoint preflight overload missing');
-if (!vpn.includes('ProxyRepository.verify(next.host, next.port)')) throw new Error('VPN rotation does not preflight its selected SOCKS5 endpoint');
+if (!repository.includes('fun verify(host: String, port: Int)')) throw new Error('SOCKS5 compatibility verifier missing');
+if (!vpn.includes('LocalSocksBridge') || !vpn.includes('relayBridge!!.start()')) throw new Error('VPN does not start the controlled local relay bridge');
 const activity = await readFile('android/app/src/main/java/com/hpn/app/MainActivity.kt', 'utf8');
 if (activity.includes('EditText') || activity.includes('proxy_list')) throw new Error('Manual proxy input still present');
 if (!activity.includes('ON') || !activity.includes('OFF') || !activity.includes('⚙')) throw new Error('Minimal ON/OFF and settings controls missing');
-if (!activity.includes('startAfterRefresh') || !activity.includes('requestVpnPermissionAndStart')) throw new Error('Start does not continue after live refresh');
-if (!vpn.includes('rotateTunnel()') || !vpn.includes('New endpoint failed; restoring previous verified endpoint')) throw new Error('Native rotation is not fail-safe');
-if (!vpn.includes('snapshot.endpoints.any')) throw new Error('Native rotation does not guard against an empty refresh');
-console.log(`HPN verification passed: ${files.length} JS files, UI copy, live sources, proxy-only routing, and native TUN service checks.`);
+if (!activity.includes('Render controlled gateway ready') || !activity.includes('requestVpnPermissionAndStart')) throw new Error('Start does not use the controlled relay');
+if (!vpn.includes('rotateTunnel()') || !vpn.includes('controlled upstream remains active')) throw new Error('Controlled relay keepalive is missing');
+console.log(`HPN verification passed: ${files.length} JS files, controlled relay, minimal UI, and native TUN service checks.`);
 
 // Dashboard metadata must never use decorative em-dash placeholders.
 const serverSource = readFileSync(new URL('../engine/server.js', import.meta.url), 'utf8');
