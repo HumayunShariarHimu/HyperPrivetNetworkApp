@@ -8,6 +8,7 @@ import java.net.Socket
 import java.net.URL
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.regex.Pattern
 
@@ -55,9 +56,11 @@ object ProxyRepository {
                 val jobs = SOURCES.map { source -> sourceExecutor.submit<List<Endpoint>> { runCatching { fetch(source) }.getOrDefault(emptyList()) } }
                 val results = jobs.map { it.get() }
                 val raw = results.flatten().distinctBy { it.key() }.shuffled()
-                val candidates = raw.filter { it.protocol == "socks5" }.take(240)
+                // Public lists are frequently stale. Keep the scan bounded so the UI never
+                // appears to hang while hundreds of dead endpoints are probed.
+                val candidates = raw.filter { it.protocol == "socks5" }.take(96)
                 val verified = candidates.map { candidate -> probeExecutor.submit<Endpoint?> { if (probeSocks5(candidate)) candidate else null } }
-                    .mapNotNull { it.get() }
+                    .mapNotNull { runCatching { it.get(4, TimeUnit.SECONDS) }.getOrNull() }
                     .distinctBy { it.key() }
                     .take(40)
                 val ok = results.count { it.isNotEmpty() }
@@ -74,7 +77,7 @@ object ProxyRepository {
 
     private fun fetch(source: Source): List<Endpoint> {
         val connection = (URL(source.url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 6500; readTimeout = 6500; requestMethod = "GET"
+            connectTimeout = 4500; readTimeout = 4500; requestMethod = "GET"
             setRequestProperty("User-Agent", "HPN-Android-Live-Source/1.0")
             setRequestProperty("Accept", "text/plain,text/html,application/json,*/*")
         }
@@ -87,8 +90,8 @@ object ProxyRepository {
     private fun probeSocks5(endpoint: Endpoint): Boolean {
         return try {
             Socket().use { socket ->
-                socket.connect(InetSocketAddress(endpoint.host, endpoint.port), 1800)
-                socket.soTimeout = 2500
+                socket.connect(InetSocketAddress(endpoint.host, endpoint.port), 1200)
+                socket.soTimeout = 1800
                 val input = BufferedInputStream(socket.getInputStream())
                 val output = socket.getOutputStream()
 
@@ -97,8 +100,10 @@ object ProxyRepository {
                 output.flush()
                 if (input.read() != 0x05 || input.read() != 0x00) return false
 
-                // CONNECT api.ipify.org:80 through the SOCKS5 relay.
-                val host = "api.ipify.org".toByteArray(Charsets.US_ASCII)
+                // CONNECT a small, stable HTTP endpoint through the SOCKS5 relay.
+                // A successful CONNECT is the important requirement for the native tunnel;
+                // requiring a specific IP-echo body rejected otherwise usable proxies.
+                val host = "example.com".toByteArray(Charsets.US_ASCII)
                 output.write(byteArrayOf(0x05, 0x01, 0x00, 0x03, host.size.toByte()))
                 output.write(host)
                 output.write(byteArrayOf(0x00, 0x50))
@@ -121,11 +126,12 @@ object ProxyRepository {
                 }
                 if (input.read() < 0 || input.read() < 0) return false
 
-                val request = "GET /?format=json HTTP/1.1\r\nHost: api.ipify.org\r\nConnection: close\r\n\r\n"
+                val request = "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n"
                 output.write(request.toByteArray(Charsets.US_ASCII))
                 output.flush()
-                val body = input.readBytes().toString(Charsets.UTF_8)
-                body.contains(Regex("\\b\\d{1,3}(?:\\.\\d{1,3}){3}\\b"))
+                val response = ByteArray(64)
+                val count = input.read(response)
+                count > 0 && String(response, 0, count, Charsets.US_ASCII).contains("HTTP/")
             }
         } catch (_: Exception) { false }
     }

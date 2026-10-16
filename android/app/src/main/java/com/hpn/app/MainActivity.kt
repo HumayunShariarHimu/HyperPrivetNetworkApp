@@ -11,329 +11,195 @@ import android.net.VpnService
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
-import android.view.ViewGroup
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.ScrollView
+import android.widget.FrameLayout
 import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.content.ContextCompat
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
+/** Minimal black/white HPN control screen. All operational feedback is delivered as Toasts. */
 class MainActivity : Activity() {
-    private val bg = Color.rgb(3, 5, 7)
-    private val panel = Color.rgb(12, 16, 20)
-    private val panelBorder = Color.rgb(31, 43, 48)
-    private val green = Color.rgb(0, 255, 138)
-    private val dimGreen = Color.rgb(91, 174, 137)
-    private val amber = Color.rgb(255, 190, 70)
-    private val red = Color.rgb(255, 92, 92)
-    private lateinit var statusText: TextView
-    private lateinit var statusDot: TextView
-    private lateinit var hpnButton: TextView
-    private lateinit var hpnCaption: TextView
-    private lateinit var poolValue: TextView
-    private lateinit var sourceValue: TextView
-    private lateinit var rotationValue: TextView
-    private lateinit var exitValue: TextView
-    private lateinit var footer: TextView
-    private var intervalSeconds = 15
+    private val black = Color.rgb(0, 0, 0)
+    private val white = Color.rgb(255, 255, 255)
+    private lateinit var powerButton: TextView
     private var connected = false
-    private var currentState = "IDLE"
+    private var intervalSeconds = 15
+    private var refreshInProgress = false
 
     private val stateReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: android.content.Context?, intent: Intent?) {
             if (intent?.action != HpnVpnService.ACTION_STATE) return
             val state = intent.getStringExtra("state") ?: "UNKNOWN"
-            val host = intent.getStringExtra("host").orEmpty()
-            val port = intent.getIntExtra("port", 0)
             connected = state == "CONNECTED" || state == "SWITCHING"
-            currentState = state
-            renderState(state, host, port)
+            renderPowerState()
+            if (state.startsWith("ERROR:")) toast(state.removePrefix("ERROR: ").ifBlank { "VPN failed to start" })
+            if (state == "CONNECTED") toast("HPN ON")
+            if (state == "DISCONNECTED") toast("HPN OFF")
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = bg
-        window.navigationBarColor = bg
+        window.statusBarColor = black
+        window.navigationBarColor = black
         intervalSeconds = prefs().getInt("interval_seconds", 15).coerceIn(5, 3600)
-        buildDashboard()
+        setContentView(buildMinimalScreen())
         ContextCompat.registerReceiver(this, stateReceiver, IntentFilter(HpnVpnService.ACTION_STATE), ContextCompat.RECEIVER_NOT_EXPORTED)
-        updatePool(ProxyRepository.current())
-        if (ProxyRepository.current().endpoints.isEmpty()) refreshSources()
+        refreshSourcesInBackground()
     }
 
-    private fun buildDashboard() {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(bg)
-            setPadding(dp(20), dp(14), dp(20), dp(12))
+    private fun buildMinimalScreen(): View {
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(black)
+            systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         }
-        root.addView(header(), LinearLayout.LayoutParams(-1, dp(58)))
 
-        val scrollContent = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-        }
-        scrollContent.addView(label("SECURE ROUTING CONTROL", 11f, dimGreen), lp(-1, 32))
-        scrollContent.addView(buildStatusPanel(), lp(-1, 62))
-        scrollContent.addView(hpnControl(), lp(-1, 250))
-        scrollContent.addView(statsPanel(), lp(-1, 142))
-        scrollContent.addView(actionRow(), lp(-1, 62))
-        scrollContent.addView(label("\nLIVE FEED", 11f, dimGreen), lp(-1, 30))
-        scrollContent.addView(footerInfo(), lp(-1, 100))
-
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            addView(scrollContent)
-        }
-        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        root.addView(label("HPN  •  NATIVE SOCKS5 TUNNEL  •  v0.2.0", 9f, Color.rgb(70, 95, 87)).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, dp(28)))
-        setContentView(root)
-    }
-
-    private fun header(): View {
-        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        val title = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        title.addView(label("HPN", 25f, green), lp(-1, 30))
-        title.addView(label("HYPER PRIVET NETWORK", 9f, dimGreen), lp(-1, 20))
-        row.addView(title, LinearLayout.LayoutParams(0, -1, 1f))
         val settings = TextView(this).apply {
             text = "⚙"
-            textSize = 28f
+            textSize = 30f
             gravity = Gravity.CENTER
-            setTextColor(green)
-            setPadding(dp(10), 0, 0, 0)
-            contentDescription = "Open HPN settings"
-            setOnClickListener { showSettings() }
+            setTextColor(white)
+            contentDescription = "Settings"
+            setOnClickListener { showTimeSettings() }
         }
-        row.addView(settings, lp(54, -1))
-        return row
-    }
+        root.addView(settings, FrameLayout.LayoutParams(dp(64), dp(64), Gravity.TOP or Gravity.END).apply {
+            topMargin = dp(8)
+            rightMargin = dp(8)
+        })
 
-    private fun buildStatusPanel(): View {
-        val box = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(15), 0, dp(15), 0)
-            background = rounded(panel, panelBorder, 1, 12)
-        }
-        statusDot = label("●", 15f, amber)
-        box.addView(statusDot, lp(28, -1))
-        statusText = label("READY • CONNECT TO START", 12f, amber)
-        box.addView(statusText, lp(0, -1, 1f))
-        val live = label("LIVE", 9f, dimGreen)
-        live.gravity = Gravity.CENTER
-        box.addView(live, lp(42, -1))
-        return box
-    }
-
-    private fun hpnControl(): View {
-        val area = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        powerButton = TextView(this).apply {
+            text = "OFF"
+            textSize = 25f
             gravity = Gravity.CENTER
-        }
-        hpnButton = TextView(this).apply {
-            text = "HPN\nOFF"
-            gravity = Gravity.CENTER
-            textAlignment = View.TEXT_ALIGNMENT_CENTER
-            textSize = 20f
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            setTextColor(green)
-            background = rounded(bg, green, 2, 200)
-            elevation = dp(8).toFloat()
-            contentDescription = "Turn HPN VPN on or off"
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            setTextColor(black)
+            background = circle(white, white, 3)
+            contentDescription = "HPN ON or OFF"
+            elevation = dp(10).toFloat()
             setOnClickListener { toggleVpn() }
         }
-        area.addView(hpnButton, lp(176, 176))
-        hpnCaption = label("TAP TO START FULL-DEVICE VPN", 10f, dimGreen).apply { gravity = Gravity.CENTER }
-        area.addView(hpnCaption, lp(-1, 38))
-        return area
-    }
+        root.addView(powerButton, FrameLayout.LayoutParams(dp(190), dp(190), Gravity.CENTER))
 
-    private fun statsPanel(): View {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            background = rounded(panel, panelBorder, 1, 14)
+        val footer = TextView(this).apply {
+            text = "Humayun Shariar Himu"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+            setTextColor(white)
         }
-        box.addView(label("CONNECTION STATS", 10f, dimGreen), lp(-1, 24))
-        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        poolValue = statCell(row, "POOL", "0")
-        sourceValue = statCell(row, "SOURCES", "—")
-        rotationValue = statCell(row, "ROTATION", formatInterval(intervalSeconds))
-        exitValue = statCell(row, "EXIT", "OFF")
-        box.addView(row, lp(-1, 90))
-        return box
+        root.addView(footer, FrameLayout.LayoutParams(-1, dp(44), Gravity.BOTTOM).apply {
+            bottomMargin = dp(10)
+        })
+        return root
     }
 
-    private fun statCell(row: LinearLayout, name: String, value: String): TextView {
-        val cell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER }
-        cell.addView(label(name, 9f, dimGreen).apply { gravity = Gravity.CENTER }, lp(-1, 26))
-        val valueView = label(value, 15f, green).apply { gravity = Gravity.CENTER }
-        cell.addView(valueView, lp(-1, 36))
-        row.addView(cell, LinearLayout.LayoutParams(0, -1, 1f))
-        return valueView
+    private fun renderPowerState() {
+        if (!::powerButton.isInitialized) return
+        powerButton.text = if (connected) "ON" else "OFF"
+        powerButton.setTextColor(if (connected) white else black)
+        powerButton.background = if (connected) circle(black, white, 3) else circle(white, white, 3)
     }
 
-    private fun actionRow(): View {
-        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        row.addView(smallButton("UPDATE LIVE PROXIES") { refreshSources() }, lp(0, 48, 1f))
-        row.addView(smallButton("↻  ROTATE") { rotateNow() }, lp(0, 48, 1f))
-        row.addView(smallButton("▣  STATS") { showStats() }, lp(0, 48, 1f))
-        return row
-    }
-
-    private fun footerInfo(): View {
-        footer = label("SOURCE FEED // waiting for live update\nPROXY MODE // verified SOCKS5 only\nNETWORK // Internet connection required", 10f, dimGreen)
-        footer.setPadding(dp(14), dp(12), dp(14), dp(12))
-        footer.background = rounded(panel, panelBorder, 1, 14)
-        return footer
-    }
-
-    private fun smallButton(text: String, listener: () -> Unit): Button = Button(this).apply {
-        this.text = text
-        textSize = 11f
-        typeface = Typeface.MONOSPACE
-        setTextColor(green)
-        isAllCaps = false
-        background = rounded(panel, panelBorder, 1, 12)
-        setOnClickListener { listener() }
-        stateListAnimator = null
-    }
-
-    private fun label(value: String, size: Float, color: Int): TextView = TextView(this).apply {
-        text = value
-        textSize = size
-        setTextColor(color)
-        typeface = Typeface.MONOSPACE
-        gravity = Gravity.CENTER_VERTICAL
-    }
-
-    private fun rounded(fill: Int, stroke: Int, width: Int, radius: Int): GradientDrawable = GradientDrawable().apply {
-        setColor(fill)
-        setStroke(width, stroke)
-        cornerRadius = dp(radius).toFloat()
-    }
-
-    private fun lp(width: Int, height: Int, weight: Float = 0f) = LinearLayout.LayoutParams(if (width == 0) 0 else if (width == -1) -1 else dp(width), if (height == -1) -1 else dp(height), weight).apply { setMargins(0, dp(4), 0, dp(4)) }
-
-    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
-    private fun prefs() = getSharedPreferences("hpn", MODE_PRIVATE)
-    private fun formatInterval(seconds: Int): String = if (seconds >= 60) "${seconds / 60}M" else "${seconds}S"
-
-    private fun renderState(state: String, host: String, port: Int) {
-        val isError = state.startsWith("ERROR:")
-        val color = when { isError -> red; connected -> green; state == "DISCONNECTED" -> amber; else -> amber }
-        statusDot.setTextColor(color)
-        statusText.setTextColor(color)
-        statusText.text = when {
-            state == "CONNECTED" -> "CONNECTED • SOCKS5 $host:$port"
-            state == "SWITCHING" -> "SWITCHING • VERIFYING NEW EXIT"
-            isError -> "ERROR • ${state.removePrefix("ERROR: ")}"
-            state == "DISCONNECTED" -> "OFFLINE • VPN DISCONNECTED"
-            else -> "${state.uppercase(Locale.US)} • READY"
+    private fun toggleVpn() {
+        if (connected) {
+            sendService(HpnVpnService.ACTION_DISCONNECT)
+            return
         }
-        hpnButton.text = if (connected) "HPN\nON" else "HPN\nOFF"
-        hpnButton.setTextColor(if (connected) green else amber)
-        hpnButton.background = rounded(bg, if (connected) green else amber, 3, 200)
-        hpnCaption.text = if (connected) "TAP TO STOP FULL-DEVICE VPN" else "TAP TO START FULL-DEVICE VPN"
-        exitValue.text = if (connected && host.isNotBlank()) "$host:$port" else "OFF"
+        val pool = ProxyRepository.current().endpoints.any { it.protocol == "socks5" }
+        if (pool) requestVpnPermissionAndStart() else {
+            toast("Finding a working SOCKS5 proxy...")
+            refreshSourcesInBackground(startAfterRefresh = true)
+        }
     }
 
-    private fun updatePool(snapshot: ProxyRepository.Snapshot) {
-        poolValue.text = snapshot.endpoints.size.toString()
-        sourceValue.text = "${snapshot.sourcesOk}/${snapshot.sourcesTotal}"
-        rotationValue.text = formatInterval(intervalSeconds)
-        footer.text = "SOURCE FEED // ${snapshot.sourcesOk}/${snapshot.sourcesTotal} ONLINE\nPROXY MODE // ${snapshot.endpoints.size} VERIFIED SOCKS5\nROTATION // ${formatInterval(intervalSeconds)}\nNETWORK // Internet connection required"
-    }
-
-    private fun refreshSources(startAfter: Boolean = false) {
-        statusText.text = "SCANNING • FETCHING LIVE PROXIES..."
-        statusText.setTextColor(amber)
+    private fun refreshSourcesInBackground(startAfterRefresh: Boolean = false) {
+        if (refreshInProgress) return
+        refreshInProgress = true
         ProxyRepository.refresh(this) { snapshot ->
-            updatePool(snapshot)
-            if (snapshot.endpoints.isNotEmpty()) {
-                statusText.text = if (startAfter) "READY • STARTING VPN..." else "READY • VERIFIED PROXY POOL LOADED"
-                if (startAfter) requestVpnPermissionAndStart()
-            } else {
-                statusText.text = "BLOCKED • NO VERIFIED SOCKS5 PROXY"
-                statusText.setTextColor(red)
+            refreshInProgress = false
+            if (snapshot.endpoints.isEmpty()) {
+                if (startAfterRefresh) toast("No working proxy found. Check Internet and try again.")
+            } else if (startAfterRefresh) {
+                requestVpnPermissionAndStart()
             }
         }
     }
 
-    private fun toggleVpn() {
-        if (connected) sendService(HpnVpnService.ACTION_DISCONNECT)
-        else if (ProxyRepository.current().endpoints.any { it.protocol == "socks5" }) requestVpnPermissionAndStart()
-        else refreshSources(startAfter = true)
-    }
-
     private fun requestVpnPermissionAndStart() {
         runCatching {
-            val intent = VpnService.prepare(this)
-            if (intent != null) startActivityForResult(intent, 100) else sendService(HpnVpnService.ACTION_CONNECT)
-        }.onFailure { statusText.text = "ERROR • VPN START FAILED" }
+            val permission = VpnService.prepare(this)
+            if (permission != null) startActivityForResult(permission, VPN_PERMISSION_REQUEST)
+            else sendService(HpnVpnService.ACTION_CONNECT)
+        }.onFailure { toast("VPN permission could not be opened") }
     }
 
-    private fun rotateNow() {
-        statusText.text = "SCANNING • REFRESHING BEFORE ROTATION..."
-        ProxyRepository.refresh(this) { snapshot ->
-            updatePool(snapshot)
-            if (snapshot.endpoints.isNotEmpty()) sendService(HpnVpnService.ACTION_ROTATE)
-            else { statusText.text = "BLOCKED • NO VERIFIED SOCKS5 PROXY"; statusText.setTextColor(red) }
+    private fun showTimeSettings() {
+        val content = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(dp(24), dp(8), dp(24), 0)
         }
-    }
-
-    private fun showStats() {
-        val snapshot = ProxyRepository.current()
-        AlertDialog.Builder(this).setTitle("HPN CONNECTION STATS")
-            .setMessage("VPN state: $currentState\nVerified SOCKS5 pool: ${snapshot.endpoints.size}\nSources online: ${snapshot.sourcesOk}/${snapshot.sourcesTotal}\nRotation interval: ${formatInterval(intervalSeconds)}\n\nOnly verified proxy endpoints are used. Direct fallback is disabled.")
-            .setPositiveButton("CLOSE", null).show()
-    }
-
-    private fun showSettings() {
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(8), dp(24), 0) }
-        val value = label("Rotation interval: ${formatInterval(intervalSeconds)}", 14f, green)
-        layout.addView(value, lp(-1, 42))
+        val value = TextView(this).apply {
+            text = "${formatInterval(intervalSeconds)}"
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setTextColor(black)
+        }
+        content.addView(value, android.widget.LinearLayout.LayoutParams(-1, dp(42)))
         val seek = SeekBar(this).apply {
             max = 3595
             progress = intervalSeconds - 5
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    if (!fromUser) return
-                    intervalSeconds = progress + 5
-                    prefs().edit().putInt("interval_seconds", intervalSeconds).apply()
-                    value.text = "Rotation interval: ${formatInterval(intervalSeconds)}"
-                    rotationValue.text = formatInterval(intervalSeconds)
+                    if (fromUser) {
+                        intervalSeconds = progress + 5
+                        prefs().edit().putInt("interval_seconds", intervalSeconds).apply()
+                        value.text = formatInterval(intervalSeconds)
+                    }
                 }
                 override fun onStartTrackingTouch(bar: SeekBar?) = Unit
                 override fun onStopTrackingTouch(bar: SeekBar?) = Unit
             })
         }
-        layout.addView(seek, lp(-1, 48))
-        layout.addView(label("Choose 5 seconds to 60 minutes. Changes apply to the next rotation.", 11f, dimGreen), lp(-1, 48))
-        AlertDialog.Builder(this).setTitle("⚙  HPN SETTINGS").setView(layout).setPositiveButton("DONE", null).show()
+        content.addView(seek, android.widget.LinearLayout.LayoutParams(-1, dp(50)))
+        AlertDialog.Builder(this)
+            .setTitle("TIME SETUP")
+            .setView(content)
+            .setPositiveButton("DONE", null)
+            .show()
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 100 && resultCode == RESULT_OK) sendService(HpnVpnService.ACTION_CONNECT)
-        else if (requestCode == 100) { statusText.text = "CANCELLED • VPN PERMISSION NOT GRANTED"; statusText.setTextColor(amber) }
+        if (requestCode == VPN_PERMISSION_REQUEST) {
+            if (resultCode == RESULT_OK) sendService(HpnVpnService.ACTION_CONNECT)
+            else toast("VPN permission is required")
+        }
     }
+
+    private fun sendService(action: String) {
+        runCatching {
+            ContextCompat.startForegroundService(this, Intent(this, HpnVpnService::class.java).setAction(action))
+        }.onFailure { toast("VPN service could not start") }
+    }
+
+    private fun circle(fill: Int, stroke: Int, width: Int) = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(fill)
+        setStroke(width, stroke)
+    }
+
+    private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    private fun prefs() = getSharedPreferences("hpn", MODE_PRIVATE)
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+    private fun formatInterval(seconds: Int) = if (seconds >= 60) "${seconds / 60} MIN" else "$seconds SEC"
 
     override fun onDestroy() {
         runCatching { unregisterReceiver(stateReceiver) }
         super.onDestroy()
     }
 
-    private fun sendService(action: String) {
-        runCatching {
-            ContextCompat.startForegroundService(this, Intent(this, HpnVpnService::class.java).setAction(action))
-            statusText.text = if (action == HpnVpnService.ACTION_DISCONNECT) "STOPPING • CLOSING VPN..." else "STARTING • WAITING FOR VPN SERVICE..."
-            statusText.setTextColor(amber)
-        }.onFailure { statusText.text = "ERROR • VPN SERVICE START FAILED" }
+    companion object {
+        private const val VPN_PERMISSION_REQUEST = 100
     }
 }

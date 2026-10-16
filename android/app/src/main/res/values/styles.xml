@@ -2,9 +2,9 @@
     <style name="Theme.HPN" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">monospace</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:colorAccent">#00FF80</item>
-        <item name="android:windowBackground">#020504</item>
-        <item name="android:navigationBarColor">#020504</item>
-        <item name="android:statusBarColor">#020504</item>
+        <item name="android:colorAccent">#FFFFFF</item>
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:navigationBarColor">#000000</item>
+        <item name="android:statusBarColor">#000000</item>
     </style>
 </resources>
