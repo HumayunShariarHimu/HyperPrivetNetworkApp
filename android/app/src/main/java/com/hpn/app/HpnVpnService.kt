@@ -55,13 +55,14 @@ class HpnVpnService : VpnService() {
             when (intent?.action) {
                 ACTION_DISCONNECT -> stopTunnel()
                 ACTION_ROTATE -> rotateTunnel()
-                else -> startTunnel()
+                ACTION_CONNECT -> startTunnel()
+                else -> Log.i("HPN", "Ignoring service restart without an explicit connect action")
             }
         } catch (error: Throwable) {
             Log.e("HPN", "VPN service start failed", error)
             fail("Native VPN startup failed: ${error.javaClass.simpleName}")
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun startTunnel(endpointOverride: SocksEndpoint? = null, fatalOnFailure: Boolean = true): Boolean {
@@ -85,21 +86,31 @@ class HpnVpnService : VpnService() {
             .addRoute("::", 0)
             .addDnsServer("198.18.0.2")
             .addDisallowedApplication(packageName)
-        val fd = vpn.establish() ?: run { if (fatalOnFailure) fail("Android refused the VPN interface") else Log.e("HPN", "Android refused the replacement VPN interface"); return false }
-        val config = File(filesDir, "hpn-tunnel.yml")
-        config.writeText(endpoint.toYaml())
-        createChannel()
-        val notice = notification("Routing device traffic through ${endpoint.host}:${endpoint.port}")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, notice, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(NOTIFICATION_ID, notice)
+        val fd = try { vpn.establish() } catch (error: Throwable) {
+            relayBridge?.stop(); relayBridge = null
+            if (fatalOnFailure) fail("Android VPN permission/start failed: ${error.javaClass.simpleName}")
+            return false
+        } ?: run {
+            relayBridge?.stop(); relayBridge = null
+            if (fatalOnFailure) fail("Android refused the VPN interface") else Log.e("HPN", "Android refused the replacement VPN interface")
+            return false
         }
-        if (!TProxyStartService(config.absolutePath, fd.fd)) {
+        try {
+            val config = File(filesDir, "hpn-tunnel.yml")
+            config.writeText(endpoint.toYaml())
+            createChannel()
+            val notice = notification("Routing device traffic through ${endpoint.host}:${endpoint.port}")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(NOTIFICATION_ID, notice, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } else {
+                startForeground(NOTIFICATION_ID, notice)
+            }
+            if (!TProxyStartService(config.absolutePath, fd.fd)) throw IllegalStateException("native tunnel returned false")
+        } catch (error: Throwable) {
             fd.close()
             relayBridge?.stop()
             relayBridge = null
-            if (fatalOnFailure) fail("Native TUN-to-SOCKS5 backend failed to start") else Log.e("HPN", "Native TUN-to-SOCKS5 replacement failed")
+            if (fatalOnFailure) fail("VPN startup failed: ${error.javaClass.simpleName}") else Log.e("HPN", "VPN replacement startup failed", error)
             return false
         }
         tunFd = fd
@@ -132,11 +143,12 @@ class HpnVpnService : VpnService() {
     }
 
     private fun tearDown() {
-        if (tunFd == null) return
-        if (TProxyIsRunning()) TProxyStopService()
-        tunFd?.close()
+        if (tunFd != null) {
+            runCatching { if (TProxyIsRunning()) TProxyStopService() }
+            runCatching { tunFd?.close() }
+        }
         tunFd = null
-        relayBridge?.stop()
+        runCatching { relayBridge?.stop() }
         relayBridge = null
         getSharedPreferences("hpn", MODE_PRIVATE).edit().putBoolean("running", false).apply()
     }

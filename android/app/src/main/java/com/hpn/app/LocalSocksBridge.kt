@@ -1,6 +1,7 @@
 package com.hpn.app
 
 import android.net.VpnService
+import android.util.Log
 import okhttp3.*
 import okio.ByteString
 import org.json.JSONObject
@@ -27,7 +28,8 @@ class LocalSocksBridge(private val vpn: VpnService) {
         server = opened
         executor.execute {
             while (!opened.isClosed) {
-                runCatching { opened.accept() }.onSuccess { socket -> executor.execute { handle(socket) } }
+                val accepted = runCatching { opened.accept() }.getOrNull() ?: break
+                runCatching { executor.execute { handle(accepted) } }.onFailure { runCatching { accepted.close() } }
             }
         }
         return opened.localPort
@@ -40,6 +42,15 @@ class LocalSocksBridge(private val vpn: VpnService) {
     }
 
     private fun handle(client: Socket) {
+        try {
+            handleConnection(client)
+        } catch (error: Throwable) {
+            Log.e("HPN-RELAY", "Loopback SOCKS connection failed", error)
+            runCatching { client.close() }
+        }
+    }
+
+    private fun handleConnection(client: Socket) {
         client.use { socket ->
             socket.soTimeout = 20000
             val input = socket.getInputStream()
