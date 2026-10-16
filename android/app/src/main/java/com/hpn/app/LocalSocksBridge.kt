@@ -49,7 +49,7 @@ class LocalSocksBridge(private val vpn: VpnService) {
             if (methodCount !in 1..255) return
             val methods = input.readExactly(methodCount) ?: return
             if (!methods.contains(0.toByte())) {
-                output.write(byteArrayOf(5, 255)); output.flush(); return
+                output.write(byteArrayOf(5.toByte(), 255.toByte())); output.flush(); return
             }
             output.write(byteArrayOf(5, 0)); output.flush()
 
@@ -109,7 +109,7 @@ class LocalSocksBridge(private val vpn: VpnService) {
                 val count = input.read(buffer)
                 if (count < 0) break
                 if (count == 0) continue
-                if (!relay.send(ByteString.of(buffer, 0, count))) break
+                if (!relay.send(ByteString.of(buffer.copyOf(count)))) break
             }
             relay.close(1000, "client closed")
             relayClosed.await(2, TimeUnit.SECONDS)
