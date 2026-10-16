@@ -41,13 +41,38 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = black
-        window.navigationBarColor = black
-        intervalSeconds = prefs().getInt("interval_seconds", 15).coerceIn(5, 3600)
-        setContentView(buildMinimalScreen())
-        ContextCompat.registerReceiver(this, stateReceiver, IntentFilter(HpnVpnService.ACTION_STATE), ContextCompat.RECEIVER_NOT_EXPORTED)
-        appendLog("RELAY // Render controlled gateway ready")
-        appendLog("TUN // local SOCKS5 bridge waiting")
+        runCatching {
+            window.statusBarColor = black
+            window.navigationBarColor = black
+            intervalSeconds = prefs().getInt("interval_seconds", 15).coerceIn(5, 3600)
+            setContentView(buildMinimalScreen())
+            ContextCompat.registerReceiver(this, stateReceiver, IntentFilter(HpnVpnService.ACTION_STATE), ContextCompat.RECEIVER_NOT_EXPORTED)
+            val previousCrash = HpnApplication.readLastCrash(application)
+            if (previousCrash.isNullOrBlank()) {
+                appendLog("RELAY // Render controlled gateway ready")
+                appendLog("TUN // local SOCKS5 bridge waiting")
+                prefs().getString("last_error", null)?.let { error ->
+                    appendLog("SERVICE // $error")
+                    prefs().edit().remove("last_error").apply()
+                }
+            } else {
+                appendLog("CRASH // previous launch stopped unexpectedly")
+                previousCrash.lineSequence().takeLast(7).forEach { appendLog(it.take(110)) }
+                HpnApplication.clearLastCrash(application)
+            }
+        }.onFailure { error -> showLaunchFailure(error) }
+    }
+
+    private fun showLaunchFailure(error: Throwable) {
+        val message = TextView(this).apply {
+            setBackgroundColor(black)
+            setTextColor(white)
+            typeface = Typeface.MONOSPACE
+            textSize = 12f
+            setPadding(dp(20), dp(40), dp(20), dp(20))
+            text = "HPN STARTUP ERROR\n\n${error.javaClass.simpleName}: ${error.message ?: "unknown error"}\n\nThe error was saved for diagnosis."
+        }
+        setContentView(message)
     }
 
     private fun buildMinimalScreen(): View {

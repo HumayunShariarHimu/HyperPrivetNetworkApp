@@ -34,6 +34,11 @@ const activity = await readFile('android/app/src/main/java/com/hpn/app/MainActiv
 if (activity.includes('EditText') || activity.includes('proxy_list')) throw new Error('Manual proxy input still present');
 if (!activity.includes('ON') || !activity.includes('OFF') || !activity.includes('⚙')) throw new Error('Minimal ON/OFF and settings controls missing');
 if (!activity.includes('Render controlled gateway ready') || !activity.includes('requestVpnPermissionAndStart')) throw new Error('Start does not use the controlled relay');
+if (!activity.includes('showLaunchFailure') || !activity.includes('readLastCrash')) throw new Error('Startup crash diagnostics missing');
+const app = await readFile('android/app/src/main/java/com/hpn/app/HpnApplication.kt', 'utf8');
+if (!app.includes('setDefaultUncaughtExceptionHandler') || !app.includes('last-crash.txt')) throw new Error('Persistent crash capture missing');
+const manifest = await readFile('android/app/src/main/AndroidManifest.xml', 'utf8');
+if (!manifest.includes('android:name=".HpnApplication"')) throw new Error('Crash-reporting Application is not registered');
 if (!vpn.includes('rotateTunnel()') || !vpn.includes('controlled upstream remains active')) throw new Error('Controlled relay keepalive is missing');
 console.log(`HPN verification passed: ${files.length} JS files, controlled relay, minimal UI, and native TUN service checks.`);
 
