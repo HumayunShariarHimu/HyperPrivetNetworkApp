@@ -16,16 +16,17 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
-import java.util.Locale
 
 /** Minimal black/white HPN control screen. All operational feedback is delivered as Toasts. */
 class MainActivity : Activity() {
     private val black = Color.rgb(0, 0, 0)
     private val white = Color.rgb(255, 255, 255)
     private lateinit var powerButton: TextView
+    private lateinit var logView: TextView
     private var connected = false
     private var intervalSeconds = 15
     private var refreshInProgress = false
+    private val logLines = ArrayDeque<String>()
 
     private val stateReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: android.content.Context?, intent: Intent?) {
@@ -81,6 +82,18 @@ class MainActivity : Activity() {
         }
         root.addView(powerButton, FrameLayout.LayoutParams(dp(190), dp(190), Gravity.CENTER))
 
+        logView = TextView(this).apply {
+            textSize = 9f
+            setTextColor(white)
+            typeface = Typeface.MONOSPACE
+            gravity = Gravity.BOTTOM or Gravity.START
+            setPadding(dp(12), dp(4), dp(12), dp(4))
+            isVerticalScrollBarEnabled = false
+        }
+        root.addView(logView, FrameLayout.LayoutParams(-1, dp(118), Gravity.BOTTOM).apply {
+            bottomMargin = dp(54)
+        })
+
         val footer = TextView(this).apply {
             text = "Humayun Shariar Himu"
             textSize = 12f
@@ -114,13 +127,29 @@ class MainActivity : Activity() {
     }
 
     private fun refreshSourcesInBackground(startAfterRefresh: Boolean = false) {
-        if (refreshInProgress) return
+        if (refreshInProgress) {
+            appendLog("FETCH // already running")
+            return
+        }
         refreshInProgress = true
+        appendLog("FETCH // starting ${ProxyRepository.sourceLabels().size} sources")
         ProxyRepository.refresh(this) { snapshot ->
             refreshInProgress = false
+            if (snapshot.reports.isEmpty()) {
+                appendLog("FETCH // FAILED ${snapshot.error ?: "unknown error"}")
+            } else {
+                snapshot.reports.forEach { report ->
+                    val suffix = if (report.detail.isBlank()) "" else " (${report.detail})"
+                    appendLog("${report.status.padEnd(4)} // ${report.label}: ${report.candidates}$suffix")
+                }
+                appendLog("PARSE // ${snapshot.rawCandidates} unique candidates")
+                appendLog("PROBE // ${snapshot.endpoints.size} working SOCKS5")
+            }
             if (snapshot.endpoints.isEmpty()) {
+                appendLog("RESULT // NO WORKING PROXY")
                 if (startAfterRefresh) toast("No working proxy found. Check Internet and try again.")
             } else if (startAfterRefresh) {
+                appendLog("RESULT // proxy ready, opening VPN permission")
                 requestVpnPermissionAndStart()
             }
         }
@@ -190,6 +219,12 @@ class MainActivity : Activity() {
     }
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    private fun appendLog(message: String) {
+        if (!::logView.isInitialized) return
+        if (logLines.size >= 9) logLines.removeFirst()
+        logLines.addLast(message)
+        logView.text = logLines.joinToString("\n")
+    }
     private fun prefs() = getSharedPreferences("hpn", MODE_PRIVATE)
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun formatInterval(seconds: Int) = if (seconds >= 60) "${seconds / 60} MIN" else "$seconds SEC"
