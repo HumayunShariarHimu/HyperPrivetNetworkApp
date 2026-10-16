@@ -57,7 +57,7 @@ class MainActivity : Activity() {
                 }
             } else {
                 appendLog("CRASH // previous launch stopped unexpectedly")
-                previousCrash.lineSequence().takeLast(7).forEach { appendLog(it.take(110)) }
+                previousCrash.lineSequence().toList().takeLast(7).forEach { appendLog(it.take(110)) }
                 HpnApplication.clearLastCrash(application)
             }
         }.onFailure { error -> showLaunchFailure(error) }
