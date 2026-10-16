@@ -1,0 +1,8 @@
+node_modules/
+engine/node_modules/
+.env
+.vercel/
+.DS_Store
+*.log
+android/.gradle/
+android/app/build/

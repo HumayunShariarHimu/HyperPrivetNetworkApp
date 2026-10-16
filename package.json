@@ -1,0 +1,21 @@
+{
+  "name": "proxygoal",
+  "version": "2.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ProxyGoaL v2.1 — real proxy rotation by Humayun Shariar Himu",
+  "scripts": {
+    "verify": "node scripts/verify.mjs"
+  },
+  "author": "Humayun Shariar Himu",
+  "license": "MIT",
+  "engines": {
+    "node": "20.x"
+  },
+  "dependencies": {
+    "http-proxy-agent": "^7.0.2",
+    "https-proxy-agent": "^7.0.5",
+    "node-fetch": "^3.3.2",
+    "socks-proxy-agent": "^8.0.5"
+  }
+}

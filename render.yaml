@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: hpn-browser-engine
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: MAX_SESSIONS
+        value: "1"
+      - key: AUTO_DISCOVER_PUBLIC
+        value: "true"
+      - key: SESSION_TTL_MIN
+        value: "30"
+      - key: PUBLIC_PROXY_SAMPLE
+        value: "80"
+      - key: PUBLIC_PROXY_TARGET
+        value: "8"
+      - key: PROXY_LIST
+        sync: false
+      - key: ROTATING_PROXY_URL
+        sync: false

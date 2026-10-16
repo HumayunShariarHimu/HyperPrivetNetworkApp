@@ -1,0 +1,28 @@
+name: HPN Render keepalive
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping-render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping Render health endpoint
+        env:
+          RENDER_ENGINE_URL: https://hpn-browser-engine.onrender.com
+        run: |
+          set -euo pipefail
+          response=$(curl --fail --silent --show-error --max-time 45 "$RENDER_ENGINE_URL/health")
+          echo "$response"
+          echo "$response" | grep -q '"ok":true'
+      - name: Refresh proxy catalog when engine is awake
+        env:
+          RENDER_ENGINE_URL: https://hpn-browser-engine.onrender.com
+        run: |
+          curl --fail --silent --show-error --max-time 90 -X POST "$RENDER_ENGINE_URL/pool/refresh" || true
